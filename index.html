@@ -141,6 +141,27 @@
     max-width: 560px;
   }
 
+  .series-nav{
+    display:flex; flex-wrap:wrap; gap:8px;
+    margin: 14px 0 28px;
+  }
+  .series-nav a{
+    font-size: 11.5px;
+    padding: 5px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: color .15s, border-color .15s, background-color .15s;
+  }
+  .series-nav a:hover{ color: var(--amber); border-color: var(--amber-soft); }
+  .series-nav a.current{
+    color: var(--amber);
+    border-color: var(--amber-soft);
+    background: rgba(255,176,0,0.06);
+    cursor: default;
+  }
+
   .term{
     background: #060504;
     border: 1px solid var(--line);
@@ -334,10 +355,15 @@
 
 <div class="hero">
   <div class="hero-inner">
-    <div class="eyebrow">ubuntu server guide</div>
+    <div class="eyebrow">ubuntu server guide &middot; part 1 of 2</div>
     <h1>Deploy Python on Ubuntu</h1>
-    <p class="sub">Every command to install, wire up, and run a Python application as a background service on Ubuntu &mdash; using a virtual environment and systemd, in the order you'll actually run them.</p>
+    <p class="sub">Every command to install, wire up, and run a Python application as a background service on Ubuntu &mdash; using a virtual environment, Gunicorn + Uvicorn workers, and systemd, in the order you'll actually run them.</p>
     <p class="sub" style="margin-top:-16px; font-size:12.5px;">Everywhere you see <code>myapp</code> or <code>/var/www/myapp</code>, swap in your own app name and path.</p>
+
+    <div class="series-nav">
+      <a href="index.html" class="current">1 &middot; Install &amp; run as a service</a>
+      <a href="production-deployment.html">2 &middot; Nginx + HTTPS (production) &rarr;</a>
+    </div>
 
     <div class="term">
       <div class="term-bar">
@@ -421,16 +447,18 @@
 <span class="c-cmd">pip list</span>                       <span class="c-comment"># check installed packages</span>
 <span class="c-cmd">deactivate</span></code></pre>
         </div>
+        <p class="card-note">Make sure <code>gunicorn</code>, <code>uvicorn</code>, and <code>uvicorn-worker</code> are listed in <code>requirements.txt</code> &mdash; step 05 uses them to run the app under systemd. (<code>uvicorn_worker.UvicornWorker</code> is the current, maintained worker class &mdash; the older <code>uvicorn.workers.UvicornWorker</code> path is deprecated.)</p>
       </div>
     </section>
 
     <section class="card" id="s4">
       <div class="card-head"><span class="num">04</span><h2>Test the application manually</h2></div>
       <div class="card-body">
+        <p class="card-note">Run the exact command systemd will run, in the foreground &mdash; if it works here, it'll work as a service.</p>
         <div class="codeblock">
           <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb4">Copy</button></div>
           <pre id="cb4"><code><span class="c-cmd">cd /var/www/myapp</span>
-<span class="c-cmd">venv/bin/python src/main.py</span></code></pre>
+<span class="c-cmd">venv/bin/gunicorn src.main:app -w 4 -k uvicorn_worker.UvicornWorker --bind 127.0.0.1:8000</span>          <span class="c-comment"># Ctrl+C to stop</span></code></pre>
         </div>
       </div>
     </section>
@@ -445,7 +473,7 @@
         <div class="codeblock">
           <div class="filebar"><span>myapp.service</span><button class="copy-btn" data-copy="cb5b">Copy</button></div>
           <pre id="cb5b"><code><span class="c-key">[Unit]</span>
-Description=Python Application Service
+Description=Python Application Service (Gunicorn + Uvicorn workers)
 After=network.target
 
 <span class="c-key">[Service]</span>
@@ -453,14 +481,18 @@ Type=simple
 User=www-data
 Group=www-data
 WorkingDirectory=/var/www/myapp
-ExecStart=/var/www/myapp/venv/bin/python /var/www/myapp/src/main.py
+EnvironmentFile=/var/www/myapp/.env
+ExecStart=/var/www/myapp/venv/bin/gunicorn src.main:app \
+  -w 4 -k uvicorn_worker.UvicornWorker \
+  --bind 127.0.0.1:8000 \
+  --access-logfile - --error-logfile -
 Restart=always
-RestartSec=5
-Environment="PYTHONUNBUFFERED=1"
+RestartSec=3
 
 <span class="c-key">[Install]</span>
 WantedBy=multi-user.target</code></pre>
         </div>
+        <p class="card-note"><code>src.main:app</code> assumes <code>src/main.py</code> exposes an ASGI app object named <code>app</code> (FastAPI/Starlette) &mdash; swap in your own module path. <code>EnvironmentFile</code> loads vars from the <code>.env</code> you already keep out of git.</p>
         <p class="card-note">Save in nano: <code>Ctrl + O</code> &rarr; <code>Enter</code> &rarr; <code>Ctrl + X</code></p>
       </div>
     </section>
@@ -570,7 +602,7 @@ __pycache__/
     <section class="card" id="r4">
       <div class="card-head"><h2>Complete initial setup (one script)</h2></div>
       <div class="card-body">
-        <p class="card-note">Everything from steps 01&ndash;08, back to back &mdash; edit the service file line manually when the nano editor opens.</p>
+        <p class="card-note">Automates steps 01&ndash;08 into one script &mdash; it writes the unit file for you, so there's no manual nano/paste step. Verification commands (versions, package list, <code>is-enabled</code>, live logs) are already covered in the walkthrough above; jump to step 08 to confirm it worked.</p>
         <div class="codeblock">
           <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cbr4">Copy all</button></div>
           <pre id="cbr4"><code><span class="c-cmd">sudo apt update</span>
@@ -580,20 +612,36 @@ __pycache__/
 <span class="c-cmd">python3 -m venv venv</span>
 <span class="c-cmd">source venv/bin/activate</span>
 <span class="c-cmd">python -m pip install --upgrade pip</span>
-<span class="c-cmd">pip install -r requirements.txt</span>
+<span class="c-cmd">pip install -r requirements.txt</span>   <span class="c-comment"># must include gunicorn, uvicorn, uvicorn-worker</span>
 <span class="c-cmd">deactivate</span>
 
-<span class="c-cmd">venv/bin/python src/main.py</span>    <span class="c-comment"># manual smoke test, Ctrl+C to stop</span>
+<span class="c-cmd">venv/bin/gunicorn src.main:app -w 4 -k uvicorn_worker.UvicornWorker --bind 127.0.0.1:8000</span>   <span class="c-comment"># smoke test, Ctrl+C to stop</span>
 
-<span class="c-cmd">sudo nano /etc/systemd/system/myapp.service</span>
-<span class="c-comment"># paste the unit file from step 05, save &amp; exit</span>
+<span class="c-cmd">sudo tee /etc/systemd/system/myapp.service &gt; /dev/null &lt;&lt;'EOF'</span>
+<span class="c-key">[Unit]</span>
+Description=Python Application Service (Gunicorn + Uvicorn workers)
+After=network.target
+
+<span class="c-key">[Service]</span>
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/myapp
+EnvironmentFile=/var/www/myapp/.env
+ExecStart=/var/www/myapp/venv/bin/gunicorn src.main:app -w 4 -k uvicorn_worker.UvicornWorker --bind 127.0.0.1:8000 --access-logfile - --error-logfile -
+Restart=always
+RestartSec=3
+
+<span class="c-key">[Install]</span>
+WantedBy=multi-user.target
+<span class="c-cmd">EOF</span>
 
 <span class="c-cmd">sudo chown -R www-data:www-data /var/www/myapp</span>
+<span class="c-cmd">sudo chmod -R u+rwX /var/www/myapp</span>
 <span class="c-cmd">sudo systemctl daemon-reload</span>
 <span class="c-cmd">sudo systemctl enable myapp</span>
 <span class="c-cmd">sudo systemctl start myapp</span>
-<span class="c-cmd">sudo systemctl status myapp</span>
-<span class="c-cmd">sudo journalctl -u myapp -n 100 --no-pager</span></code></pre>
+<span class="c-cmd">sudo systemctl status myapp</span></code></pre>
         </div>
       </div>
     </section>
@@ -609,7 +657,8 @@ __pycache__/
 │   └── <span class="file">main.py</span>
 ├── venv/
 │   └── bin/
-│       └── <span class="exec">python</span>
+│       ├── python
+│       └── <span class="exec">gunicorn</span>
 ├── requirements.txt
 ├── .env
 ├── .gitignore
@@ -620,9 +669,11 @@ __pycache__/
           </div>
           <div class="codeblock">
             <div class="filebar"><span>execution chain</span></div>
-            <pre><code class="tree">/var/www/myapp/venv/bin/python
+            <pre><code class="tree">/var/www/myapp/venv/bin/gunicorn
         ↓
-/var/www/myapp/src/main.py</code></pre>
+  -k uvicorn_worker.UvicornWorker (×4)
+        ↓
+/var/www/myapp/src/main.py  (app)</code></pre>
           </div>
         </div>
 
@@ -633,7 +684,7 @@ __pycache__/
 <span class="arr">↓</span>
 <span class="step">myapp.service</span>
 <span class="arr">↓</span>
-<span class="step">Python application (src/main.py)</span>
+<span class="step">Gunicorn + Uvicorn workers (src/main.py)</span>
 <span class="arr">↓</span>
 <span class="step">Restart=always on failure</span>
 <span class="arr">↓</span>
@@ -645,7 +696,10 @@ __pycache__/
   </main>
 </div>
 
-<footer>Generic guide &middot; replace <code>myapp</code> and <code>/var/www/myapp</code> with your own app name and path &middot; systemd + venv + journalctl</footer>
+<footer>
+  Part 1 of 2 &middot; replace <code>myapp</code> and <code>/var/www/myapp</code> with your own app name and path &middot; systemd + venv + gunicorn + journalctl
+  <br><a href="production-deployment.html">Continue to Part 2: Nginx, systemd hardening &amp; HTTPS &rarr;</a>
+</footer>
 
 <script>
   // theme toggle
@@ -709,9 +763,9 @@ __pycache__/
   // boot terminal typing animation
   const bootLines = [
     { p: 'boot', a: '→', t: 'myapp.service' },
-    { p: 'systemd', a: '→', t: 'ExecStart venv/bin/python src/main.py' },
-    { p: 'app', a: '→', t: 'PYTHONUNBUFFERED=1, listening…' },
-    { p: 'on crash', a: '→', t: 'Restart=always (RestartSec=5)' },
+    { p: 'systemd', a: '→', t: 'ExecStart venv/bin/gunicorn src.main:app -k uvicorn_worker.UvicornWorker' },
+    { p: 'app', a: '→', t: '4 workers bound to 127.0.0.1:8000' },
+    { p: 'on crash', a: '→', t: 'Restart=always (RestartSec=3)' },
     { p: 'output', a: '→', t: 'journalctl -u myapp -f' },
   ];
   const term = document.getElementById('bootTerm');

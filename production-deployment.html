@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Go Live: Nginx, systemd &amp; HTTPS // production deployment guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root{
+    --bg: #0a0908;
+    --panel: #14120d;
+    --panel-2: #1c1912;
+    --line: #332c1f;
+    --amber: #ffb000;
+    --amber-dim: #c98a2c;
+    --amber-soft: #7a5a1f;
+    --text: #e8dfc8;
+    --text-dim: #a89a78;
+    --green: #7ec97a;
+    --red: #d9704f;
+    color-scheme: dark;
+  }
+
+  :root[data-theme="light"]{
+    --bg: #f6f2e8;
+    --panel: #ffffff;
+    --panel-2: #efe8d6;
+    --line: #ddd2b0;
+    --amber: #a86a00;
+    --amber-dim: #8a5a12;
+    --amber-soft: #c9a15a;
+    --text: #241f14;
+    --text-dim: #6b6048;
+    --green: #3f7a3a;
+    --red: #b24d2c;
+    color-scheme: light;
+  }
+
+  :root[data-theme="light"] body::before{ display: none; }
+  :root[data-theme="light"] .term-body{ color: #2f7a3a; }
+  :root[data-theme="light"] .term{ box-shadow: 0 0 0 1px rgba(168,106,0,0.06), 0 20px 50px -25px rgba(0,0,0,0.15); }
+  :root[data-theme="light"] .hero{
+    background: radial-gradient(ellipse 900px 400px at 50% -10%, rgba(168,106,0,0.06), transparent 70%);
+  }
+
+  *{ box-sizing: border-box; }
+  html{ scroll-behavior: smooth; }
+  ::selection{ background: var(--amber); color: #0a0908; }
+
+  body{
+    margin:0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    transition: background-color .2s ease, color .2s ease;
+  }
+
+  .theme-toggle{
+    position: fixed;
+    top: 18px;
+    right: 22px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 14px 6px 6px;
+    cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    transition: background-color .2s ease, border-color .2s ease, color .2s ease;
+  }
+  .theme-toggle:hover{ color: var(--text); border-color: var(--amber-soft); }
+  .theme-toggle .icon{
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel-2);
+    font-size: 12px;
+  }
+  @media (max-width: 600px){
+    .theme-toggle{ top: 10px; right: 10px; padding: 5px 10px 5px 5px; }
+    .theme-toggle .label{ display:none; }
+  }
+
+  body::before{
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(255,176,0,0.015) 0px,
+      rgba(255,176,0,0.015) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    z-index: 999;
+    mix-blend-mode: overlay;
+  }
+
+  h1,h2,h3{
+    font-family: 'Space Grotesk', sans-serif;
+    color: var(--text);
+    margin: 0;
+  }
+
+  a{ color: var(--amber); }
+
+  /* ---------- HERO ---------- */
+  .hero{
+    padding: 64px 32px 40px;
+    border-bottom: 1px solid var(--line);
+    background:
+      radial-gradient(ellipse 900px 400px at 50% -10%, rgba(255,176,0,0.08), transparent 70%);
+  }
+  .hero-inner{ max-width: 920px; margin: 0 auto; }
+  .eyebrow{
+    color: var(--amber-dim);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-size: 11px;
+    margin-bottom: 14px;
+  }
+  .hero h1{
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 6px;
+  }
+  .hero p.sub{
+    color: var(--text-dim);
+    font-size: 14px;
+    margin: 8px 0 28px;
+    max-width: 560px;
+  }
+
+  .series-nav{
+    display:flex; flex-wrap:wrap; gap:8px;
+    margin: 14px 0 28px;
+  }
+  .series-nav a{
+    font-size: 11.5px;
+    padding: 5px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text-dim);
+    text-decoration: none;
+    transition: color .15s, border-color .15s, background-color .15s;
+  }
+  .series-nav a:hover{ color: var(--amber); border-color: var(--amber-soft); }
+  .series-nav a.current{
+    color: var(--amber);
+    border-color: var(--amber-soft);
+    background: rgba(255,176,0,0.06);
+    cursor: default;
+  }
+
+  .term{
+    background: #060504;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px rgba(255,176,0,0.03), 0 20px 60px -20px rgba(0,0,0,0.6);
+    overflow: hidden;
+  }
+  .term-bar{
+    display:flex; align-items:center; gap:8px;
+    padding: 9px 14px;
+    background: var(--panel-2);
+    border-bottom: 1px solid var(--line);
+  }
+  .dot{ width:9px; height:9px; border-radius:50%; }
+  .dot.r{ background:#5a3020; }
+  .dot.y{ background:#5a4a20; }
+  .dot.g{ background:#2f4a2a; }
+  .term-title{ margin-left:8px; color: var(--text-dim); font-size:11px; }
+  .term-body{
+    padding: 20px 22px 26px;
+    font-size: 13px;
+    min-height: 168px;
+    color: var(--green);
+    white-space: pre-wrap;
+  }
+  .term-body .p{ color: var(--amber-dim); }
+  .term-body .arrow{ color: var(--text-dim); }
+  .cursor{
+    display:inline-block; width:7px; height:14px; background: var(--amber);
+    vertical-align:-2px; animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink{ 50%{ opacity:0; } }
+
+  /* ---------- LAYOUT ---------- */
+  .layout{
+    max-width: 1180px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 40px;
+    padding: 40px 32px 100px;
+  }
+
+  nav.toc{
+    position: sticky;
+    top: 24px;
+    align-self: start;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    padding-right: 8px;
+  }
+  nav.toc .group-label{
+    color: var(--text-dim);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 20px 0 8px;
+  }
+  nav.toc .group-label:first-child{ margin-top: 0; }
+  nav.toc a{
+    display:flex; gap:8px;
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 12.5px;
+    padding: 5px 0;
+    border-left: 2px solid transparent;
+    padding-left: 10px;
+    margin-left: -12px;
+    transition: color .15s, border-color .15s;
+  }
+  nav.toc a .n{ color: var(--amber-soft); flex-shrink:0; }
+  nav.toc a:hover{ color: var(--text); }
+  nav.toc a.active{ color: var(--amber); border-left-color: var(--amber); }
+
+  main{ min-width: 0; }
+
+  section.card{
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    margin-bottom: 22px;
+    scroll-margin-top: 24px;
+    overflow: hidden;
+  }
+  .card-head{
+    display:flex; align-items:baseline; gap:12px;
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .card-head .num{
+    font-family:'Space Grotesk',sans-serif;
+    color: var(--amber-soft);
+    font-size: 13px;
+    font-weight:600;
+  }
+  .card-head h2{
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .card-note{
+    padding: 0 22px;
+    color: var(--text-dim);
+    font-size: 12.5px;
+    margin: 12px 0 0;
+  }
+  .card-body{ padding: 16px 22px 20px; }
+
+  .codeblock{
+    position: relative;
+    background: #060504;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    margin-top: 10px;
+  }
+  .codeblock .filebar{
+    display:flex; justify-content: space-between; align-items:center;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(255,176,0,0.03);
+  }
+  .codeblock .filebar span{ color: var(--text-dim); font-size: 11px; }
+  .copy-btn{
+    background: transparent;
+    border: 1px solid var(--amber-soft);
+    color: var(--amber-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .copy-btn:hover{ border-color: var(--amber); color: var(--amber); background: rgba(255,176,0,0.06); }
+  .copy-btn.copied{ border-color: var(--green); color: var(--green); }
+
+  pre{
+    margin: 0;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 12.8px;
+    line-height: 1.65;
+  }
+  code{ font-family: 'IBM Plex Mono', monospace; color: var(--text); }
+  .c-cmd{ color: var(--green); }
+  .c-comment{ color: var(--text-dim); font-style: italic; }
+  .c-str{ color: #e0b878; }
+  .c-key{ color: var(--amber); }
+
+  .grid-2{ display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 760px){ .grid-2{ grid-template-columns: 1fr; } }
+
+  .tree{
+    color: var(--text-dim);
+    font-size: 12.5px;
+    line-height: 1.7;
+  }
+  .tree .file{ color: var(--text); }
+  .tree .exec{ color: var(--amber); }
+
+  .flow{
+    display:flex; flex-direction: column; gap: 4px;
+    font-size: 13px;
+  }
+  .flow .step{ color: var(--text); }
+  .flow .arr{ color: var(--amber-soft); padding-left: 6px; }
+
+  footer{
+    text-align:center;
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 30px 0 50px;
+    border-top: 1px solid var(--line);
+  }
+  footer a{ display:inline-block; margin-top: 6px; }
+
+  @media (max-width: 880px){
+    .layout{ grid-template-columns: 1fr; }
+    nav.toc{ position: static; max-height: none; margin-bottom: 12px; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .cursor{ animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" id="themeToggle" aria-label="Toggle light and dark mode">
+  <span class="icon" id="themeIcon">&#9789;</span>
+  <span class="label" id="themeLabel">Dark</span>
+</button>
+
+<div class="hero">
+  <div class="hero-inner">
+    <div class="eyebrow">ubuntu server guide &middot; part 2 of 2</div>
+    <h1>Go Live: Nginx + HTTPS</h1>
+    <p class="sub">Picks up right where Part 1 left off. This is the full path from a GitHub repository to a real, secured website &mdash; pulling your code onto the server, running it under Gunicorn + Uvicorn workers managed by systemd, publishing it through Nginx, and locking it down with HTTPS.</p>
+    <p class="sub" style="margin-top:-16px; font-size:12.5px;">Everywhere you see <code>myapp</code>, <code>/var/www/myapp</code>, or <code>myapp.example.com</code>, swap in your own app name, path, and domain.</p>
+
+    <div class="series-nav">
+      <a href="index.html">&larr; 1 &middot; Install &amp; run as a service</a>
+      <a href="production-deployment.html" class="current">2 &middot; Nginx + HTTPS (production)</a>
+    </div>
+
+    <div class="term">
+      <div class="term-bar">
+        <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+        <div class="term-title">curl -i https://myapp.example.com/health</div>
+      </div>
+      <div class="term-body" id="bootTerm"></div>
+    </div>
+  </div>
+</div>
+
+<div class="layout">
+
+  <nav class="toc" id="toc">
+    <div class="group-label">Deploy</div>
+    <a href="#s9"><span class="n">09</span> Architecture &amp; prerequisites</a>
+    <a href="#s10"><span class="n">10</span> Install server packages</a>
+    <a href="#s11"><span class="n">11</span> Git deploy access</a>
+    <a href="#s12"><span class="n">12</span> Clone the repository</a>
+    <a href="#s13"><span class="n">13</span> Venv &amp; dependencies</a>
+    <a href="#s14"><span class="n">14</span> Wrap the app for the web</a>
+    <a href="#s15"><span class="n">15</span> Production .env file</a>
+    <a href="#s16"><span class="n">16</span> Smoke-test with Gunicorn</a>
+    <a href="#s17"><span class="n">17</span> Production systemd service</a>
+    <a href="#s18"><span class="n">18</span> Point DNS at the server</a>
+    <a href="#s19"><span class="n">19</span> Nginx reverse proxy</a>
+    <a href="#s20"><span class="n">20</span> Lock down the firewall</a>
+    <a href="#s21"><span class="n">21</span> HTTPS with Certbot</a>
+
+    <div class="group-label">Reference</div>
+    <a href="#r6"><span class="n">&middot;</span> Endpoints &amp; example requests</a>
+    <a href="#r7"><span class="n">&middot;</span> Routine deploy</a>
+    <a href="#r8"><span class="n">&middot;</span> Diagnostics</a>
+    <a href="#r9"><span class="n">&middot;</span> Security checklist</a>
+    <a href="#r10"><span class="n">&middot;</span> Verification checklist</a>
+  </nav>
+
+  <main>
+
+    <section class="card" id="s9">
+      <div class="card-head"><span class="num">09</span><h2>Architecture &amp; what you'll need</h2></div>
+      <div class="card-body">
+        <p class="card-note">Part 1 got one Python process running in the background. Production adds two more pieces in front of it: a process manager that's actually resilient, and a reverse proxy that gives you a real domain and HTTPS instead of a bare port.</p>
+        <div class="codeblock">
+          <div class="filebar"><span>request path</span></div>
+          <pre><code class="flow"><span class="step">Browser</span>
+<span class="arr">↓</span> https://myapp.example.com
+<span class="step">Nginx (ports 80 / 443)</span>
+<span class="arr">↓</span> proxy_pass → 127.0.0.1:8000
+<span class="step">Gunicorn + Uvicorn workers, managed by systemd</span>
+<span class="arr">↓</span>
+<span class="step">Your app (api.py → core logic)</span></code></pre>
+        </div>
+        <p class="card-note">Only ports <code>80</code>, <code>443</code>, and <code>22</code> need to be public. Port <code>8000</code> stays private &mdash; never open it in a firewall, and don't leave it exposed on a temporary port like <code>8080</code> for a "final" deployment.</p>
+        <p class="card-note">Deployment values used throughout this guide:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>reference</span></div>
+          <pre><code class="tree">Linux user             ubuntu
+Project directory      /var/www/myapp
+Virtual environment    /var/www/myapp/venv
+ASGI entry point       api:app
+Internal address       127.0.0.1:8000
+systemd service        myapp.service
+Public domain          myapp.example.com</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="s10">
+      <div class="card-head"><span class="num">10</span><h2>Install server packages</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb10a">Copy</button></div>
+          <pre id="cb10a"><code><span class="c-cmd">sudo apt update</span>
+<span class="c-cmd">sudo apt install -y git nginx python3 python3-pip python3-venv python3-dev build-essential snapd</span></code></pre>
+        </div>
+        <p class="card-note">Verify:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb10b">Copy</button></div>
+          <pre id="cb10b"><code><span class="c-cmd">python3 --version</span>
+<span class="c-cmd">git --version</span>
+<span class="c-cmd">nginx -v</span></code></pre>
+        </div>
+        <p class="card-note"><code>snapd</code> is only needed later, for Certbot in step 21 &mdash; installing it now saves a trip back.</p>
+      </div>
+    </section>
+
+    <section class="card" id="s11">
+      <div class="card-head"><span class="num">11</span><h2>Set up Git deploy access</h2></div>
+      <div class="card-body">
+        <p class="card-note">If your repo is private, the server needs its own key so it can pull code without your personal credentials. Generate it as whichever user will own the deployment:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb11a">Copy</button></div>
+          <pre id="cb11a"><code><span class="c-cmd">ssh-keygen -t ed25519 -C <span class="c-str">"myapp-deploy-key"</span> -f ~/.ssh/id_ed25519</span>          <span class="c-comment"># no passphrase — this runs unattended</span>
+<span class="c-cmd">cat ~/.ssh/id_ed25519.pub</span></code></pre>
+        </div>
+        <p class="card-note">Add the printed public key to your Git host as a <strong>read-only deploy key</strong> (on GitHub: Repository &rarr; Settings &rarr; Deploy keys &rarr; Add deploy key). The server only needs to pull, never push.</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb11b">Copy</button></div>
+          <pre id="cb11b"><code><span class="c-cmd">ssh -T git@github.com</span>          <span class="c-comment"># confirms the key works</span></code></pre>
+        </div>
+        <p class="card-note">Never copy or expose <code>~/.ssh/id_ed25519</code> (no <code>.pub</code>) &mdash; that's the private half.</p>
+      </div>
+    </section>
+
+    <section class="card" id="s12">
+      <div class="card-head"><span class="num">12</span><h2>Clone the repository</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb12a">Copy</button></div>
+          <pre id="cb12a"><code><span class="c-cmd">sudo mkdir -p /var/www/myapp</span>
+<span class="c-cmd">sudo chown $(whoami):www-data /var/www/myapp</span>
+<span class="c-cmd">sudo chmod 775 /var/www/myapp</span>
+
+<span class="c-cmd">git clone git@github.com:your-org/myapp.git /var/www/myapp</span>
+
+<span class="c-cmd">cd /var/www/myapp</span>
+<span class="c-cmd">ls -la</span></code></pre>
+        </div>
+        <p class="card-note">A repo that started life as a command-line tool often looks like this &mdash; no web server in sight yet:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>tree</span></div>
+          <pre><code class="tree">/var/www/myapp/
+├── core/              <span class="c-comment">your existing business logic</span>
+├── main.py            <span class="c-comment">existing CLI entry point</span>
+└── requirements.txt</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="s13">
+      <div class="card-head"><span class="num">13</span><h2>Create the venv &amp; install dependencies</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb13a">Copy</button></div>
+          <pre id="cb13a"><code><span class="c-cmd">cd /var/www/myapp</span>
+<span class="c-cmd">python3 -m venv venv</span>
+<span class="c-cmd">./venv/bin/python -m pip install --upgrade pip setuptools wheel</span>
+<span class="c-cmd">./venv/bin/python -m pip install -r requirements.txt</span></code></pre>
+        </div>
+        <p class="card-note">If the project doesn't already serve HTTP, add a production API stack:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb13b">Copy</button></div>
+          <pre id="cb13b"><code><span class="c-cmd">./venv/bin/python -m pip install fastapi gunicorn "uvicorn[standard]" uvicorn-worker</span></code></pre>
+        </div>
+        <p class="card-note">Add the same four packages to <code>requirements.txt</code> so the next deploy reproduces this environment exactly. Note the worker class: the maintained path is <code>uvicorn_worker.UvicornWorker</code> (from the separate <code>uvicorn-worker</code> package) &mdash; not the older <code>uvicorn.workers.UvicornWorker</code>. If you used the old path in Part 1, it's worth switching.</p>
+      </div>
+    </section>
+
+    <section class="card" id="s14">
+      <div class="card-head"><span class="num">14</span><h2>Wrap the app for the web</h2></div>
+      <div class="card-body">
+        <p class="card-note">Running <code>main.py</code> from the shell proves your logic works, but it doesn't make it reachable from a browser. Keep <code>main.py</code> as-is and add a thin <code>api.py</code> next to it that imports the same functions and exposes them over HTTP:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb14a">Copy</button></div>
+          <pre id="cb14a"><code><span class="c-cmd">./venv/bin/python main.py --help</span>          <span class="c-comment"># confirm the existing CLI still works first</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>api.py</span><button class="copy-btn" data-copy="cb14b">Copy</button></div>
+          <pre id="cb14b"><code>#!/usr/bin/env python3
+
+import logging
+import os
+from datetime import date
+
+from fastapi import FastAPI, HTTPException, Query
+
+from core.logic import run_job
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="My App API",
+    description="Web interface for the existing core logic",
+    version="1.0.0",
+)
+
+
+@app.get("/")
+def home():
+    return {"success": True, "message": "My App is running"}
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "healthy",
+        "service": "myapp",
+        "third_party_configured": bool(os.getenv("THIRD_PARTY_API_KEY")),
+    }
+
+
+@app.post("/api/jobs")
+def create_job(
+    job_date: str = Query(default_factory=lambda: str(date.today())),
+    target_id: str | None = Query(default=None),
+):
+    try:
+        logger.info("Running job: date=%s target=%s", job_date, target_id or "all")
+        result = run_job(date_str=job_date, single_target_id=target_id)
+        return {"success": True, "data": result}
+    except Exception as exception:
+        logger.exception("Job failed")
+        raise HTTPException(status_code=500, detail="Job failed") from exception</code></pre>
+        </div>
+        <p class="card-note">The <code>/health</code> endpoint matters more than it looks &mdash; step 16 onward all use it to prove each layer (app, systemd, Nginx, HTTPS) is actually working.</p>
+      </div>
+    </section>
+
+    <section class="card" id="s15">
+      <div class="card-head"><span class="num">15</span><h2>Create the production .env file</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb15a">Copy</button></div>
+          <pre id="cb15a"><code><span class="c-cmd">nano /var/www/myapp/.env</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>.env</span><button class="copy-btn" data-copy="cb15b">Copy</button></div>
+          <pre id="cb15b"><code>THIRD_PARTY_API_KEY=replace-with-the-real-key
+PYTHONUNBUFFERED=1</code></pre>
+        </div>
+        <p class="card-note">systemd's <code>EnvironmentFile</code> only understands plain <code>KEY=value</code> lines &mdash; no <code>export</code>, no quotes-as-shell-syntax, no expressions.</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb15c">Copy</button></div>
+          <pre id="cb15c"><code><span class="c-cmd">sudo chown $(whoami):www-data /var/www/myapp/.env</span>
+<span class="c-cmd">sudo chmod 640 /var/www/myapp/.env</span>
+
+<span class="c-cmd">sudo mkdir -p /var/www/myapp/output</span>
+<span class="c-cmd">sudo chown -R $(whoami):www-data /var/www/myapp/output</span>
+<span class="c-cmd">sudo chmod 775 /var/www/myapp/output</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="s16">
+      <div class="card-head"><span class="num">16</span><h2>Smoke-test with Gunicorn</h2></div>
+      <div class="card-body">
+        <p class="card-note">Before wiring up systemd, prove the production server itself starts cleanly, in the foreground:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb16a">Copy</button></div>
+          <pre id="cb16a"><code><span class="c-cmd">cd /var/www/myapp</span>
+
+<span class="c-cmd">set -a; source .env; set +a</span>
+
+<span class="c-cmd">./venv/bin/gunicorn api:app \
+  --workers 2 --worker-class uvicorn_worker.UvicornWorker \
+  --bind 127.0.0.1:8000 \
+  --access-logfile - --error-logfile -</span></code></pre>
+        </div>
+        <p class="card-note">From another terminal:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb16b">Copy</button></div>
+          <pre id="cb16b"><code><span class="c-cmd">curl -i http://127.0.0.1:8000/health</span>          <span class="c-comment"># expect HTTP/1.1 200 OK</span></code></pre>
+        </div>
+        <p class="card-note">Stop it with <code>Ctrl+C</code> before moving on &mdash; systemd will own the process from here.</p>
+      </div>
+    </section>
+
+    <section class="card" id="s17">
+      <div class="card-head"><span class="num">17</span><h2>Create the production systemd service</h2></div>
+      <div class="card-body">
+        <p class="card-note">This builds on the unit file from Part 1, with a few production upgrades: it runs as your deploy user rather than <code>www-data</code> (so it can write generated files), restarts only <code>on-failure</code>, and gives systemd explicit start/stop timeouts.</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb17a">Copy</button></div>
+          <pre id="cb17a"><code><span class="c-cmd">sudo nano /etc/systemd/system/myapp.service</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>myapp.service</span><button class="copy-btn" data-copy="cb17b">Copy</button></div>
+          <pre id="cb17b"><code><span class="c-key">[Unit]</span>
+Description=My App (Gunicorn + Uvicorn workers)
+After=network-online.target
+Wants=network-online.target
+
+<span class="c-key">[Service]</span>
+Type=simple
+User=ubuntu
+Group=www-data
+WorkingDirectory=/var/www/myapp
+
+EnvironmentFile=/var/www/myapp/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/var/www/myapp
+
+ExecStart=/var/www/myapp/venv/bin/gunicorn api:app --workers 2 --worker-class uvicorn_worker.UvicornWorker --bind 127.0.0.1:8000 --access-logfile - --error-logfile - --timeout 300
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+
+<span class="c-key">[Install]</span>
+WantedBy=multi-user.target</code></pre>
+        </div>
+        <p class="card-note">Swap <code>User=ubuntu</code> for whichever account owns <code>/var/www/myapp</code>. Running the service as <code>www-data</code> is possible, but only after deliberately granting it write access everywhere the app needs it.</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb17c">Copy</button></div>
+          <pre id="cb17c"><code><span class="c-cmd">sudo systemctl daemon-reload</span>
+<span class="c-cmd">sudo systemctl enable myapp.service</span>
+<span class="c-cmd">sudo systemctl start myapp.service</span></code></pre>
+        </div>
+        <p class="card-note">Verify:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb17d">Copy</button></div>
+          <pre id="cb17d"><code><span class="c-cmd">sudo systemctl status myapp.service --no-pager</span>
+<span class="c-cmd">sudo ss -ltnp | grep ':8000'</span>          <span class="c-comment"># must show 127.0.0.1:8000, never 0.0.0.0:8000</span>
+<span class="c-cmd">curl -i http://127.0.0.1:8000/health</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb17e">Copy</button></div>
+          <pre id="cb17e"><code><span class="c-cmd">sudo journalctl -u myapp.service --no-pager -n 100</span>
+<span class="c-cmd">sudo journalctl -u myapp.service -f</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="s18">
+      <div class="card-head"><span class="num">18</span><h2>Point DNS at the server</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>DNS record</span></div>
+          <pre><code class="tree">Type:  A
+Name:  myapp
+Value: SERVER_PUBLIC_IP
+TTL:   300 or Auto</code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb18">Copy</button></div>
+          <pre id="cb18"><code><span class="c-cmd">dig +short myapp.example.com</span></code></pre>
+        </div>
+        <p class="card-note">Don't request a certificate in step 21 until this returns your server's real IP &mdash; Certbot needs DNS to resolve correctly first.</p>
+      </div>
+    </section>
+
+    <section class="card" id="s19">
+      <div class="card-head"><span class="num">19</span><h2>Configure Nginx as a reverse proxy</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb19a">Copy</button></div>
+          <pre id="cb19a"><code><span class="c-cmd">sudo nano /etc/nginx/sites-available/myapp.example.com</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>myapp.example.com</span><button class="copy-btn" data-copy="cb19b">Copy</button></div>
+          <pre id="cb19b"><code>server {
+    listen 80;
+    listen [::]:80;
+
+    server_name myapp.example.com;
+
+    access_log /var/log/nginx/myapp-access.log;
+    error_log /var/log/nginx/myapp-error.log;
+
+    client_max_body_size 20M;
+
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "nginx healthy\n";
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+}</code></pre>
+        </div>
+        <p class="card-note">Don't add <code>default_server</code> here if another site on this machine already owns that role.</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb19c">Copy</button></div>
+          <pre id="cb19c"><code><span class="c-cmd">sudo ln -sfn /etc/nginx/sites-available/myapp.example.com /etc/nginx/sites-enabled/myapp.example.com</span>
+
+<span class="c-cmd">sudo nginx -t</span>          <span class="c-comment"># only proceed if this passes</span>
+<span class="c-cmd">sudo systemctl reload nginx</span>          <span class="c-comment"># reload, not restart — don't drop other sites</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb19d">Copy</button></div>
+          <pre id="cb19d"><code><span class="c-cmd">curl -i http://myapp.example.com/nginx-health</span>
+<span class="c-cmd">curl -i http://myapp.example.com/health</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="s20">
+      <div class="card-head"><span class="num">20</span><h2>Lock down the firewall</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb20">Copy</button></div>
+          <pre id="cb20"><code><span class="c-cmd">sudo ufw allow 22/tcp</span>
+<span class="c-cmd">sudo ufw allow 80/tcp</span>
+<span class="c-cmd">sudo ufw allow 443/tcp</span>
+<span class="c-cmd">sudo ufw status numbered</span></code></pre>
+        </div>
+        <p class="card-note">Don't open port <code>8000</code> &mdash; Nginx reaches it locally, nothing else should. If you're on a cloud provider, also check its separate network firewall (AWS Security Groups, DigitalOcean Cloud Firewalls, etc.) &mdash; <code>ufw</code> alone won't help if that layer still allows the world in on <code>8000</code>.</p>
+      </div>
+    </section>
+
+    <section class="card" id="s21">
+      <div class="card-head"><span class="num">21</span><h2>Enable HTTPS with Certbot</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb21a">Copy</button></div>
+          <pre id="cb21a"><code><span class="c-cmd">sudo snap install core && sudo snap refresh core</span>
+<span class="c-cmd">sudo snap install --classic certbot</span>
+<span class="c-cmd">sudo ln -sfn /snap/bin/certbot /usr/bin/certbot</span>
+
+<span class="c-cmd">certbot --version</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb21b">Copy</button></div>
+          <pre id="cb21b"><code><span class="c-cmd">sudo certbot --nginx -d myapp.example.com</span>          <span class="c-comment"># choose the HTTP → HTTPS redirect when asked</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb21c">Copy</button></div>
+          <pre id="cb21c"><code><span class="c-cmd">sudo nginx -t</span>
+<span class="c-cmd">sudo systemctl reload nginx</span>
+<span class="c-cmd">curl -i https://myapp.example.com/health</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cb21d">Copy</button></div>
+          <pre id="cb21d"><code><span class="c-cmd">sudo certbot renew --dry-run</span>          <span class="c-comment"># confirms auto-renewal will actually work</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="r6">
+      <div class="card-head"><h2>Endpoints &amp; example requests</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>endpoints</span></div>
+          <pre><code class="tree">Home:                https://myapp.example.com/
+Health:              https://myapp.example.com/health
+Swagger docs:        https://myapp.example.com/docs
+OpenAPI schema:      https://myapp.example.com/openapi.json
+Your endpoint:  POST https://myapp.example.com/api/jobs</code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cbr6">Copy</button></div>
+          <pre id="cbr6"><code><span class="c-cmd">curl -X POST "https://myapp.example.com/api/jobs?job_date=2026-09-19"</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="r7">
+      <div class="card-head"><h2>Routine deploy (production)</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cbr7">Copy</button></div>
+          <pre id="cbr7"><code><span class="c-cmd">cd /var/www/myapp</span>
+<span class="c-cmd">git pull --ff-only origin main</span>          <span class="c-comment"># not "sudo git pull" — that creates root-owned files</span>
+<span class="c-cmd">./venv/bin/python -m pip install -r requirements.txt</span>
+
+<span class="c-cmd">sudo systemctl restart myapp.service</span>
+<span class="c-cmd">sudo systemctl status myapp.service --no-pager</span>
+
+<span class="c-cmd">curl --fail http://127.0.0.1:8000/health</span>
+<span class="c-cmd">curl --fail https://myapp.example.com/health</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="r8">
+      <div class="card-head"><h2>Diagnostics</h2></div>
+      <div class="card-body">
+        <p class="card-note">Test each layer in order &mdash; the first one that fails tells you where the problem actually is:</p>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cbr8">Copy</button></div>
+          <pre id="cbr8"><code><span class="c-comment"># 1. Service state</span>
+<span class="c-cmd">sudo systemctl is-active myapp.service</span>
+
+<span class="c-comment"># 2. Private app, direct</span>
+<span class="c-cmd">curl -i http://127.0.0.1:8000/health</span>
+
+<span class="c-comment"># 3. Nginx syntax</span>
+<span class="c-cmd">sudo nginx -t</span>
+
+<span class="c-comment"># 4. HTTP through the proxy</span>
+<span class="c-cmd">curl -i http://myapp.example.com/health</span>
+
+<span class="c-comment"># 5. HTTPS through the proxy</span>
+<span class="c-cmd">curl -i https://myapp.example.com/health</span></code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>failure → likely cause</span></div>
+          <pre><code class="tree">status=200/CHDIR              WorkingDirectory doesn't exist or isn't accessible
+Service keeps restarting      Gunicorn import, dependency, env, or permission error
+Port 8000 refuses connections The app isn't running
+Nginx returns 502              Nginx can't reach 127.0.0.1:8000
+Wrong site loads on the domain DNS or server_name wrong, or site not enabled
+HTTP works, HTTPS fails        Certificate or SSL config problem
+Local works, external fails    Cloud security group, ufw, DNS, or public-IP issue</code></pre>
+        </div>
+        <div class="codeblock">
+          <div class="filebar"><span>shell</span><button class="copy-btn" data-copy="cbr8b">Copy</button></div>
+          <pre id="cbr8b"><code><span class="c-cmd">sudo journalctl -u myapp.service --no-pager -n 100</span>
+<span class="c-cmd">sudo tail -100 /var/log/nginx/myapp-error.log</span>
+<span class="c-cmd">sudo tail -100 /var/log/nginx/myapp-access.log</span></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="r9">
+      <div class="card-head"><h2>Security checklist</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>checklist</span></div>
+          <pre><code class="tree">• Keep Gunicorn bound to 127.0.0.1:8000, never 0.0.0.0:8000
+• Don't open port 8000 in ufw or your cloud security group
+• Keep .env out of git; mode 640 or tighter
+• Add authentication before exposing real operations publicly
+• Consider protecting /docs and /openapi.json outside staging
+• Don't add a second default_server if one already exists
+• Always run "nginx -t" before every "systemctl reload nginx"</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="r10">
+      <div class="card-head"><h2>Final verification checklist</h2></div>
+      <div class="card-body">
+        <div class="codeblock">
+          <div class="filebar"><span>checklist</span></div>
+          <pre><code class="tree">☐ DNS resolves myapp.example.com to the correct server
+☐ main.py still works standalone through the venv
+☐ api.py exposes /health and your business endpoint
+☐ myapp.service is enabled and active
+☐ Gunicorn listens only on 127.0.0.1:8000
+☐ "nginx -t" passes
+☐ HTTP requests reach the app through Nginx
+☐ Certbot installed a valid certificate
+☐ HTTPS health check returns 200 OK
+☐ Port 8000 is not publicly exposed
+☐ Certificate auto-renewal dry run passes</code></pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer>
+  Part 2 of 2 &middot; replace <code>myapp</code>, <code>/var/www/myapp</code> and <code>myapp.example.com</code> with your own name, path, and domain &middot; systemd + nginx + certbot
+  <br><a href="index.html">&larr; Back to Part 1: Install &amp; run as a service</a>
+</footer>
+
+<script>
+  // theme toggle
+  (function(){
+    const root = document.documentElement;
+    const toggle = document.getElementById('themeToggle');
+    const icon = document.getElementById('themeIcon');
+    const label = document.getElementById('themeLabel');
+
+    function apply(theme){
+      root.setAttribute('data-theme', theme);
+      icon.innerHTML = theme === 'light' ? '&#9728;' : '&#9789;';
+      label.textContent = theme === 'light' ? 'Light' : 'Dark';
+    }
+
+    let saved = null;
+    try { saved = localStorage.getItem('theme'); } catch(e) {}
+    const prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    apply(saved || (prefersLight ? 'light' : 'dark'));
+
+    toggle.addEventListener('click', () => {
+      const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      apply(next);
+      try { localStorage.setItem('theme', next); } catch(e) {}
+    });
+  })();
+
+  // copy buttons
+  document.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.getAttribute('data-copy');
+      const el = document.getElementById(targetId);
+      const text = el.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        const original = btn.textContent;
+        btn.textContent = 'Copied ✓';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1600);
+      }).catch(() => {
+        btn.textContent = 'Press Ctrl+C';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1600);
+      });
+    });
+  });
+
+  // active TOC highlighting
+  const links = Array.from(document.querySelectorAll('nav.toc a'));
+  const sections = links.map(l => document.querySelector(l.getAttribute('href')));
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      const idx = sections.indexOf(entry.target);
+      if (idx === -1) return;
+      if (entry.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        links[idx].classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  sections.forEach(s => { if (s) io.observe(s); });
+
+  // boot terminal typing animation
+  const bootLines = [
+    { p: 'dns', a: '→', t: 'myapp.example.com → SERVER_PUBLIC_IP' },
+    { p: 'nginx', a: '→', t: '443 → 127.0.0.1:8000' },
+    { p: 'certbot', a: '→', t: "TLS via Let's Encrypt" },
+    { p: 'systemd', a: '→', t: 'myapp.service (Restart=on-failure)' },
+    { p: 'output', a: '→', t: 'curl -i https://myapp.example.com/health' },
+  ];
+  const term = document.getElementById('bootTerm');
+  let li = 0, ci = 0;
+
+  function typeNext() {
+    if (li >= bootLines.length) {
+      term.innerHTML += '\n<span class="cursor"></span>';
+      return;
+    }
+    const line = bootLines[li];
+    const full = `[ ${line.p} ] ${line.a} ${line.t}`;
+    if (ci === 0) {
+      term.innerHTML = term.innerHTML.replace('<span class="cursor"></span>', '');
+    }
+    if (ci <= full.length) {
+      const typed = full.slice(0, ci);
+      const rendered = typed.replace(/^\[ ([^\]]+) \]/, '[ <span class="p">$1</span> ]');
+      const prevLines = term.getAttribute('data-prev') || '';
+      term.innerHTML = prevLines + rendered + '<span class="cursor"></span>';
+      ci++;
+      setTimeout(typeNext, 14 + Math.random() * 18);
+    } else {
+      const prevLines = (term.getAttribute('data-prev') || '') + full.replace(/^\[ ([^\]]+) \]/, '[ <span class="p">$1</span> ]') + '\n';
+      term.setAttribute('data-prev', prevLines);
+      li++; ci = 0;
+      setTimeout(typeNext, 220);
+    }
+  }
+  setTimeout(typeNext, 300);
+</script>
+
+</body>
+</html>
